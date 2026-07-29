@@ -1,15 +1,14 @@
-from app.database import SessionLocal
+from app.database import get_session, get_engine, Base
 from app.models import Job
 from app.services.adzuna import fetch_jobs, normalize_job
-from app.database import engine, Base
+from app.config import KEYWORDS, COUNTRIES
 
-Base.metadata.create_all(bind=engine)
-
-KEYWORDS = ["data engineer", "data analyst", "python developer"]
-COUNTRIES = ["fr", "be"]
 
 def run():
-    db = SessionLocal()
+    # create tables and session inside run(), only executes when Airflow calls the task
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    db = get_session()
     total_inserted = 0
 
     for country in COUNTRIES:

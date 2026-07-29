@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+from typing import List, Dict
 
 load_dotenv()
 
@@ -8,7 +9,7 @@ ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 BASE_URL = "https://api.adzuna.com/v1/api/jobs"
 
-def fetch_jobs(keyword: str, country: str = "fr", results_per_page: int = 20) -> list[dict]:
+def fetch_jobs(keyword: str, country: str = "fr", results_per_page: int = 20) -> List[Dict]:
     
     # Call Adzuna API and return a list of offers for France
     
@@ -18,7 +19,6 @@ def fetch_jobs(keyword: str, country: str = "fr", results_per_page: int = 20) ->
         "app_key": ADZUNA_APP_KEY,
         "results_per_page": results_per_page,
         "what": keyword,
-        "content-type": "application/json"
     }
 
     response = requests.get(url, params=params)
@@ -28,9 +28,9 @@ def fetch_jobs(keyword: str, country: str = "fr", results_per_page: int = 20) ->
     return data.get("results", [])
 
 
-def normalize_job(raw: dict, country: str) -> dict:
+def normalize_job(raw: Dict, country: str) -> Dict:
     
-    # Transform a norma Adzuna offer to a dictionnary
+    # Transform a normal Adzuna offer to a dictionnary
     
     salary = raw.get("salary_min"), raw.get("salary_max")
 

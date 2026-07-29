@@ -1,23 +1,24 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
-import os 
+import os
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+Base = declarative_base()
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
+def get_engine():
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL is not set")
+    return create_engine(DATABASE_URL)
 
-class Base(DeclarativeBase):
-    pass
+def get_session():
+    return sessionmaker(bind=get_engine())()
 
 def get_db():
-    db=SessionLocal()
+    db = get_session()
     try:
         yield db
     finally:
         db.close()
-
-
