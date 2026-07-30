@@ -1,128 +1,138 @@
 # MarketPulse
 
-MarketPulse is a data pipeline that collects, stores, and analyzes tech job postings in Europe in real time. Its goal is to answer concrete questions: what skills are most in demand right now in France and Belgium, what are the prevailing salaries, and which companies are actively recruiting? The project is designed as a real-world production system — not an academic exercise. Each version adds a layer of complexity that reflects the work of enterprise data teams.
+MarketPulse is a data pipeline that collects, transforms, and stores 
+job postings from across Europe to answer concrete analytical questions: 
+what skills are most in demand right now in EU countries? What are the prevailing salaries? Which companies are 
+actively recruiting?
+
+I built this project for learning and practice — but from day one, I 
+designed it as a real production system, applying the best practices of 
+modern data engineering. Every decision in this project had to be 
+justified by the problem, not by what's popular or trending. That 
+principle shaped the roadmap more than once.
+
+---
 
 ## Architecture
 
-**Adzuna API** — source of job offers, covers France, Belgium, and the UK  
-**ingest.py** — batch script that fetches and normalizes raw offers, then stores them in PostgreSQL  
-**PostgreSQL** — persistent storage for all job offers  
-**SQLAlchemy** — ORM layer between Python and PostgreSQL  
-**FastAPI** — exposes the stored data via REST endpoints  
+Adzuna API → Airflow DAG (daily) → ingest.py → PostgreSQL → FastAPI
+
+
+**Adzuna API:** job postings provider covering most EU countries
+**Apache Airflow:** orchestrates the ingestion pipeline on a daily 
+schedule, handles retries and failure alerting  
+**ingest.py:** fetches and normalizes raw postings, stores them in 
+PostgreSQL with idempotent deduplication  
+**PostgreSQL:** persistent storage for all job postings  
+**FastAPI:** exposes stored data via REST endpoints  
+**Docker / Docker Compose:** full containerized environment: PostgreSQL, 
+Airflow scheduler, Airflow webserver, custom image  
+
+---
 
 ## Stack
 
-| Technology   | Version | Role                                                              |
-|--------------|---------|-------------------------------------------------------------------|
-| FastAPI      | 0.111.0 | Exposes data via REST endpoints                                   |
-| PostgreSQL   | 15      | Persistent storage for all job offers                             |
-| SQLAlchemy   | 2.0.30  | ORM layer between Python and PostgreSQL                           |
-| Docker       | —       | Runs PostgreSQL in an isolated container, no local install needed |
-| Adzuna API   | —       | Public job offers API covering major European markets             |
+| Technology     | Version | Role                                                    |
+|----------------|---------|---------------------------------------------------------|
+| Apache Airflow | 2.8.1   | Pipeline orchestration, scheduling, retry and alerting  |
+| FastAPI        | 0.111.0 | REST API exposing stored job data                       |
+| PostgreSQL     | 15      | Persistent storage for all job postings                 |
+| SQLAlchemy     | 1.4.x   | ORM layer between Python and PostgreSQL                 |
+| Docker         | —       | Containerized pipeline — no local installs needed       |
+| Adzuna API     | —       | Public job postings API covering major European markets |
+
+---
 
 ## Getting Started
 
-**1. Clone and install**
+**1. Clone the repository**
 ```bash
 git clone https://github.com/Ybl04/marketpulse
 cd marketpulse
-pip install -r requirements.txt
 ```
 
 **2. Configure environment variables**
 ```bash
 cp .env.example .env
-# Fill in your Adzuna API credentials and PostgreSQL credentials
+# Fill in: ADZUNA_APP_ID, ADZUNA_APP_KEY, POSTGRES_USER, 
+# POSTGRES_PASSWORD, POSTGRES_DB, DATABASE_URL
 ```
 
-**3. Start PostgreSQL**
+**3. Build and start all services**
 ```bash
+docker-compose build
+docker-compose run --rm airflow-init
 docker-compose up -d
 ```
 
-**4. Run the API**
-```bash
-uvicorn app.main:app --reload
-```
+**4. Access the Airflow UI**
 
-**5. Test**
-```
+http://localhost:8080
+
+credentials: admin / admin
+Unpause the marketpulse_ingest DAG to activate the daily schedule
+
+**5. Access the API**
+
 http://localhost:8000/health
-http://localhost:8000/jobs/data engineer
-http://localhost:8000/jobs/data engineer/stats
-http://localhost:8000/docs        ← automatic interactive documentation
-```
+http://localhost:8000/docs
 
-## Endpoints
+
+---
+
+## Airflow DAG
+
+The `marketpulse_ingest` DAG runs daily at 07:00 UTC. It fetches job 
+postings from the Adzuna API across configured keywords and countries, 
+normalizes the data, and inserts new postings into PostgreSQL. Duplicate 
+postings are skipped via `external_id` deduplication — the pipeline is 
+fully idempotent.
+
+Keywords and target countries are configured in `app/config.py`.
+
+---
+
+## API Endpoints
 
 ### GET /health
-Checks that the API is running and returns its current version.
-
 ```json
-{
-  "status": "ok",
-  "version": "1.0.0"
-}
+{ "status": "ok", "version": "1.0.0" }
 ```
-
----
 
 ### GET /jobs/{keyword}
-Calls Adzuna, stores any new offers in PostgreSQL, and returns the results. Entry point for fresh data.
-
-```json
-[
-  {
-    "title": "Alternant Data Analyst",
-    "company": "OpenClassrooms",
-    "location": "Hésingue, Saint-Louis",
-    "country": "FR",
-    "salary_min": 108000,
-    "salary_max": 192000,
-    "category": "Emplois Autres/Général",
-    "id": 21,
-    "created_at": "2026-05-13T22:15:43.289373"
-  },
-  {
-    "title": "Data Analyst",
-    "company": "Wave Works",
-    "location": "Paris, Ile-de-France",
-    "country": "FR",
-    "salary_min": null,
-    "salary_max": null,
-    "category": "Unknown",
-    "id": 22,
-    "created_at": "2026-05-13T22:15:43.321698"
-  }
-]
-```
-
----
+Returns stored job postings matching the keyword.
 
 ### GET /jobs/{keyword}/stats
-Queries what is already stored in PostgreSQL and returns aggregated statistics.
+Returns aggregated statistics: total postings, average salary range, 
+top locations.
 
-```json
-{
-  "keyword": "data analyst",
-  "total_jobs": 20,
-  "avg_salary_min": 52101.33,
-  "avg_salary_max": 82434.67,
-  "top_locations": [
-    { "location": "France", "count": 4 },
-    { "location": "Aix-en-Provence, Bouches-du-Rhône", "count": 2 },
-    { "location": "Hésingue, Saint-Louis", "count": 1 },
-    { "location": "Paris, Ile-de-France", "count": 1 },
-    { "location": "Lille, Nord", "count": 1 }
-  ]
-}
-```
+---
 
 ## Roadmap
 
-- ✅ V1 — Batch ingestion, PostgreSQL, FastAPI
-- 🔄 V2 — Kafka streaming (in progress)
-- ⏳ V3 — dbt transformations
-- ⏳ V4 — Airflow orchestration
-- ⏳ V5 — PySpark analytics
-- ⏳ V6 — Docker + deployment
+This project was planned from the beginning as a progressive system. 
+Each version adds a layer of complexity that reflects the work of 
+real enterprise data teams.
+
+**V1: Batch ingestion** ✅  
+The foundation layer: fetch job postings from the Adzuna API, normalize 
+them, and store them in PostgreSQL. FastAPI exposes the data via REST 
+endpoints. PostgreSQL runs in Docker, isolated from the local environment.
+
+**V2: Airflow orchestration** ✅  
+Originally planned as a Kafka streaming layer. After reading more about 
+DE best practices, I realized that adding Kafka to a REST API polled on 
+a schedule would be technically dishonest — complexity the data flow 
+doesn't require. The right next layer was orchestration: making the 
+pipeline run itself, recover from failures, and be observable. Airflow 
+runs in Docker alongside a separate metadata database, with a custom 
+image that packages the full project environment — the same artifact 
+that will be deployed to Azure in V4.
+
+**V3: dbt transformations** ⏳  
+A transformation layer on top of the orchestrated ingestion: clean, 
+tested, documented analytical models with full lineage.
+
+**V4: Azure cloud deployment** ⏳  
+Deploy the full pipeline to Azure. The custom Docker image built in V2 
+is the artifact that goes to Azure Container Registry.
