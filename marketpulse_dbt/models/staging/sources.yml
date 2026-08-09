@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: marketpulse
+    database: MarketJobs
+    schema: public
+    tables:
+      - name: jobs
