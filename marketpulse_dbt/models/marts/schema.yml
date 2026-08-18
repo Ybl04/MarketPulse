@@ -1,0 +1,63 @@
+version: 2
+
+models:
+  - name: mart_top_companies
+    description: "It answers which companies have the most job postings for each country, and how many postings do they have"
+    columns:
+      - name: company
+        description: "Company name"
+        tests:
+          - not_null
+      - name: country
+        tests:
+          - not_null
+      - name: posting_volume
+        tests:
+         - not_null
+
+
+  - name: mart_salary_ranges
+    description: "It answers for each country and seniority level, what is the average, minimum, maximum salary midpoint, and how many postings actually have salary data"
+    columns:
+      - name: country
+        tests:
+          - not_null
+      - name: seniority_level
+        description: "shows how much experience, skill a worker has"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Senior', 'Junior', 'Mid', 'Alternant', 'Intern']
+      - name: average
+        tests:
+          - not_null
+      - name: salary_count
+        tests:
+          - not_null
+      - name: total_count
+        tests:
+          - not_null
+
+  - name: mart_skills_demand
+    description: "Counts job posting mentions of key DE skills (Python, SQL, Airflow, dbt...) 
+                  per country and seniority level, with coverage percentage against total postings. 
+                  NOTE: Adzuna description field contains company descriptions rather than structured 
+                  skill requirements. Coverage is intentionally low (max ~16% for any keyword) and 
+                  represents a minimum signal only. This mart surfaces available signal honestly 
+                  rather than masking data quality limitations."
+    columns:
+      - name: country
+        tests:
+          - not_null
+      - name: skill
+        tests:
+          - not_null
+      - name: seniority_level
+        description: "shows how much experience, skill a worker has"
+        tests:
+          - accepted_values:
+              values: ['Senior', 'Junior', 'Mid', 'Alternant', 'Intern']
+      - name: total_count
+        tests:
+          - not_null
+      
