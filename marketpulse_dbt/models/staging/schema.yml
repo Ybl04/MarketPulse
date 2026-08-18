@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: stg_jobs
+    description: "Staging layer for raw Adzuna job postings. Cleans and types raw data from public.jobs — trims strings, coalesces nulls, casts salary fields, filters invalid records. Acts as schema evolution firewall between raw ingestion and downstream models."
+    columns:
+      - name: external_id
+        tests:
+          - not_null
+          - unique
+      - name: title
+        tests:
+          - not_null
+      - name: company
+        tests:
+         - not_null
+      - name: location
+        tests:
+         - not_null
+      - name: country
+        tests:
+         - not_null
+      - name: salary_min
+        description: "Minimum salary cast to numeric. Null when not provided by source."
+      - name: salary_max
+        description: "Maximum salary cast to numeric. Null when not provided by source."

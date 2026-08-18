@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: int_jobs_enriched
+    description: "Intermediate layer built on stg_jobs. Enriches cleaned job postings with two derived fields: seniority_level classified from job title keywords (Senior, Junior, Mid, Alternant), and salary_mid computed as the average of salary_min and salary_max where both are present. Serves as the single source of truth for all mart models."
+    columns:
+      - name: external_id
+        tests:
+          - not_null
+          - unique
+      - name: title
+        tests:
+          - not_null
+      - name: company
+        tests:
+         - not_null
+      - name: location
+        tests:
+         - not_null
+      - name: country
+        tests:
+         - not_null
+      - name: created_at
+        tests:
+          - not_null
+      - name: seniority_level
+        description: "shows how much experience, skill a worker has"
+        tests: 
+          - not_null
+          - accepted_values:
+              values: ['Senior', 'Junior', 'Mid', 'Alternant', 'Intern']
