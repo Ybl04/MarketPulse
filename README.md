@@ -15,18 +15,17 @@ principle shaped the roadmap more than once.
 
 ## Architecture
 
-Adzuna API → Airflow DAG (daily) → ingest.py → PostgreSQL → FastAPI
+```
+Adzuna API → Airflow DAG (daily) → ingest.py → PostgreSQL → dbt (staging → intermediate → marts) → FastAPI
+```
 
-
-**Adzuna API:** job postings provider covering most EU countries
-**Apache Airflow:** orchestrates the ingestion pipeline on a daily 
-schedule, handles retries and failure alerting  
-**ingest.py:** fetches and normalizes raw postings, stores them in 
-PostgreSQL with idempotent deduplication  
+**Adzuna API:** job postings provider covering most EU countries  
+**Apache Airflow:** orchestrates the ingestion pipeline on a daily schedule, handles retries and failure alerting  
+**ingest.py:** fetches and normalizes raw postings, stores them in PostgreSQL with idempotent deduplication  
 **PostgreSQL:** persistent storage for all job postings  
+**dbt:** transformation layer — cleans, enriches, and materializes analytical models from raw data  
 **FastAPI:** exposes stored data via REST endpoints  
-**Docker / Docker Compose:** full containerized environment: PostgreSQL, 
-Airflow scheduler, Airflow webserver, custom image  
+**Docker / Docker Compose:** full containerized environment: PostgreSQL, Airflow scheduler, Airflow webserver, custom image  
 
 ---
 
@@ -35,6 +34,7 @@ Airflow scheduler, Airflow webserver, custom image
 | Technology     | Version | Role                                                    |
 |----------------|---------|---------------------------------------------------------|
 | Apache Airflow | 2.8.1   | Pipeline orchestration, scheduling, retry and alerting  |
+| dbt-postgres   | 1.11.0  | Transformation layer — staging, intermediate, marts     |
 | FastAPI        | 0.111.0 | REST API exposing stored job data                       |
 | PostgreSQL     | 15      | Persistent storage for all job postings                 |
 | SQLAlchemy     | 1.4.x   | ORM layer between Python and PostgreSQL                 |
@@ -69,14 +69,20 @@ docker-compose up -d
 
 http://localhost:8080
 
-credentials: admin / admin
+credentials: admin / admin  
 Unpause the marketpulse_ingest DAG to activate the daily schedule
 
 **5. Access the API**
 
-http://localhost:8000/health
+http://localhost:8000/health  
 http://localhost:8000/docs
 
+**6. Run the dbt transformation layer**
+```bash
+cd marketpulse_dbt
+dbt run
+dbt test
+```
 
 ---
 
@@ -89,6 +95,68 @@ postings are skipped via `external_id` deduplication — the pipeline is
 fully idempotent.
 
 Keywords and target countries are configured in `app/config.py`.
+
+---
+
+## dbt Transformation Layer (V3)
+
+V3 adds the analytics backbone to the MarketPulse architecture — a dbt 
+transformation layer that sits on top of the Airflow-orchestrated PostgreSQL 
+database and prepares data for analytical consumption.
+
+Once data is ingested and stored in PostgreSQL by the Airflow DAG, the dbt 
+layer extracts from raw sources, applies cleaning and business logic, and 
+materializes analytical models ready for reporting or downstream use.
+
+### Layer Structure
+
+![dbt lineage graph](marketpulse_dbt/docs/dbt_lineage_graph.png)
+
+**Staging (`stg_jobs`)** — acts as the single source of truth and schema 
+evolution firewall. All column selection, type casting, null handling, and 
+renaming happens here. If Adzuna changes a column name or structure, only 
+this layer needs updating.
+
+**Intermediate (`int_jobs_enriched`)** — lightweight business logic layer. 
+Derives two enriched fields from staging: `seniority_level` classified from 
+job title keywords, and `salary_mid` computed as the average of min and max 
+salary where both values are present.
+
+**Marts** — analytical models that answer specific business questions:
+- `mart_top_companies` — hiring volume by company and country, ranked within each country
+- `mart_salary_ranges` — compensation ranges by country and seniority level, with salary coverage metrics
+- `mart_skills_demand` — skill keyword mentions by country and seniority level, with coverage percentage
+
+### Tests
+
+28 generic dbt tests across all 5 models: `not_null`, `unique`, and 
+`accepted_values` — covering all critical columns. Run with:
+
+```bash
+dbt test
+```
+
+### Data Quality Findings
+
+A significant data quality issue was identified during the V3 build: the 
+Adzuna `description` field — which typically lists role requirements and 
+skills in most job posting platforms — contains primarily company 
+descriptions rather than structured skill requirements.
+
+**Investigation:** Keyword matching across job postings (1,366 records at 
+time of analysis) revealed a maximum coverage of ~16% for any single skill 
+keyword (Python), with most DE-relevant tools appearing in under 2% of 
+descriptions.
+
+**Decision:** Rather than dropping `mart_skills_demand` or masking the 
+limitation, the mart was built with explicit coverage metrics 
+(`mention_count`, `total_count`, `coverage_pct`) — making the data quality 
+signal visible to any consumer of the mart. This follows a data observability 
+pattern: surfaces available signal honestly rather than hiding limitations.
+
+**Future enhancement (V5):** Integrate a second data source with structured 
+skill fields to improve signal quality. Scoped out deliberately to prioritize 
+V4 cloud deployment.
 
 ---
 
@@ -129,10 +197,16 @@ runs in Docker alongside a separate metadata database, with a custom
 image that packages the full project environment — the same artifact 
 that will be deployed to Azure in V4.
 
-**V3: dbt transformations** ⏳  
+**V3: dbt transformations** ✅  
 A transformation layer on top of the orchestrated ingestion: clean, 
-tested, documented analytical models with full lineage.
+tested, documented analytical models with full lineage. Five models 
+across three layers (staging, intermediate, marts), 28 passing tests, 
+and a formally documented data quality finding in `mart_skills_demand`.
 
 **V4: Azure cloud deployment** ⏳  
 Deploy the full pipeline to Azure. The custom Docker image built in V2 
 is the artifact that goes to Azure Container Registry.
+
+**V5: Enhanced skill signal** ⏳  
+Integrate a second structured data source to improve skill demand 
+analytics beyond what the Adzuna description field supports.
