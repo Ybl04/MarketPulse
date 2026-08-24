@@ -28,4 +28,5 @@ models:
         tests: 
           - not_null
           - accepted_values:
-              values: ['Senior', 'Junior', 'Mid', 'Alternant', 'Intern']
+              arguments:
+                values: ['Senior', 'Junior', 'Mid', 'Alternant', 'Intern']

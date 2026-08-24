@@ -17,15 +17,50 @@ principle shaped the roadmap more than once.
 
 ```
 Adzuna API → Airflow DAG (daily) → ingest.py → PostgreSQL → dbt (staging → intermediate → marts) → FastAPI
+                                                                ↑
+                                                    DockerOperator spins up
+                                                    marketpulse-dbt container,
+                                                    runs dbt build, container exits
 ```
 
 **Adzuna API:** job postings provider covering most EU countries  
-**Apache Airflow:** orchestrates the ingestion pipeline on a daily schedule, handles retries and failure alerting  
+**Apache Airflow:** orchestrates the full pipeline on a daily schedule — ingestion then transformation — handles retries and failure alerting  
 **ingest.py:** fetches and normalizes raw postings, stores them in PostgreSQL with idempotent deduplication  
 **PostgreSQL:** persistent storage for all job postings  
-**dbt:** transformation layer — cleans, enriches, and materializes analytical models from raw data  
+**dbt:** transformation layer — cleans, enriches, and materializes analytical models from raw data, run automatically by Airflow via DockerOperator  
 **FastAPI:** exposes stored data via REST endpoints  
-**Docker / Docker Compose:** full containerized environment: PostgreSQL, Airflow scheduler, Airflow webserver, custom image  
+**Docker / Docker Compose:** three isolated images per service — no dependency conflicts, clean separation of concerns  
+
+---
+
+## Docker Architecture (V3.5)
+
+The project uses three separate Docker images, each with its own isolated dependency environment:
+
+| Image | Dockerfile | Role |
+|---|---|---|
+| `marketpulse-airflow` | `docker/airflow/Dockerfile` | Airflow webserver, scheduler, and ingestion script |
+| `marketpulse-app` | `docker/app/Dockerfile` | FastAPI serving layer |
+| `marketpulse-dbt` | `docker/dbt/Dockerfile` | dbt transformation layer — ephemeral task container |
+
+**Why three images?** dbt requires Python 3.10+ while Airflow 2.8.1 runs Python 3.8 in its default image. Installing both in a single image creates irresolvable dependency conflicts. The correct architectural fix is separation: each service owns its own Python environment and its own dependencies. This also maps directly to the Azure deployment model in V4 — each image becomes an independently deployable container.
+
+**DockerOperator pattern:** The dbt image is not a long-running service. Airflow's `DockerOperator` spins it up as an ephemeral task container after each ingestion run, executes `dbt build`, and tears it down. This is the standard production pattern for running transformation tasks in isolated environments without keeping a container alive between runs.
+
+**Docker socket proxy:** A `tecnativa/docker-socket-proxy` service exposes the Docker daemon to Airflow over TCP (`tcp://docker-proxy:2375`), allowing the DockerOperator to manage containers without mounting the raw Unix socket — a more controlled and portable approach.
+
+### Services
+
+| Service | Image | Description |
+|---|---|---|
+| `db` | `postgres:15` | Data store for job postings |
+| `airflow-db` | `postgres:15` | Airflow metadata database |
+| `airflow-webserver` | `marketpulse-airflow` | Airflow UI on port 8080 |
+| `airflow-scheduler` | `marketpulse-airflow` | DAG scheduling and execution |
+| `airflow-init` | `marketpulse-airflow` | One-time DB migration and admin user creation |
+| `app` | `marketpulse-app` | FastAPI on port 8000 |
+| `dbt` | `marketpulse-dbt` | Built at compose time, launched on-demand by DockerOperator |
+| `docker-proxy` | `tecnativa/docker-socket-proxy` | Docker daemon proxy for DockerOperator |
 
 ---
 
@@ -38,7 +73,7 @@ Adzuna API → Airflow DAG (daily) → ingest.py → PostgreSQL → dbt (staging
 | FastAPI        | 0.111.0 | REST API exposing stored job data                       |
 | PostgreSQL     | 15      | Persistent storage for all job postings                 |
 | SQLAlchemy     | 1.4.x   | ORM layer between Python and PostgreSQL                 |
-| Docker         | —       | Containerized pipeline — no local installs needed       |
+| Docker         | —       | Three isolated images — no local installs needed        |
 | Adzuna API     | —       | Public job postings API covering major European markets |
 
 ---
@@ -65,34 +100,39 @@ docker-compose run --rm airflow-init
 docker-compose up -d
 ```
 
+All three images are built in a single `docker-compose build`. The dbt image is built alongside the others and launched on-demand by Airflow — no manual step required.
+
 **4. Access the Airflow UI**
 
 http://localhost:8080
 
 credentials: admin / admin  
-Unpause the marketpulse_ingest DAG to activate the daily schedule
+Unpause the `marketpulse_ingest` DAG to activate the daily schedule.
 
 **5. Access the API**
 
 http://localhost:8000/health  
 http://localhost:8000/docs
 
-**6. Run the dbt transformation layer**
-```bash
-cd marketpulse_dbt
-dbt run
-dbt test
-```
-
 ---
 
 ## Airflow DAG
 
-The `marketpulse_ingest` DAG runs daily at 07:00 UTC. It fetches job 
-postings from the Adzuna API across configured keywords and countries, 
-normalizes the data, and inserts new postings into PostgreSQL. Duplicate 
-postings are skipped via `external_id` deduplication — the pipeline is 
-fully idempotent.
+The `marketpulse_ingest` DAG runs daily at 07:00 UTC with two sequential tasks:
+
+**Task 1 — `run_ingestion` (PythonOperator)**  
+Fetches job postings from the Adzuna API across configured keywords and countries, normalizes the data, and inserts new postings into PostgreSQL. Duplicate postings are skipped via `external_id` deduplication — the pipeline is fully idempotent.
+
+**Task 2 — `run_dbt_build` (DockerOperator)**  
+After ingestion completes, Airflow instructs Docker to spin up the `marketpulse-dbt` container and run `dbt build`. This executes all 5 models and 28 tests in dependency order — stopping at the first failure. The container exits after completion and returns a success or failure status to Airflow.
+
+```
+[run_ingestion] → [run_dbt_build]
+ PythonOperator    DockerOperator
+                   image: marketpulse-dbt
+                   command: dbt build
+                   network: marketpulse_default
+```
 
 Keywords and target countries are configured in `app/config.py`.
 
@@ -130,11 +170,8 @@ salary where both values are present.
 ### Tests
 
 28 generic dbt tests across all 5 models: `not_null`, `unique`, and 
-`accepted_values` — covering all critical columns. Run with:
-
-```bash
-dbt test
-```
+`accepted_values` — covering all critical columns. Tests run automatically 
+as part of `dbt build` after every ingestion — no manual step needed.
 
 ### Data Quality Findings
 
@@ -193,9 +230,7 @@ DE best practices, I realized that adding Kafka to a REST API polled on
 a schedule would be technically dishonest — complexity the data flow 
 doesn't require. The right next layer was orchestration: making the 
 pipeline run itself, recover from failures, and be observable. Airflow 
-runs in Docker alongside a separate metadata database, with a custom 
-image that packages the full project environment — the same artifact 
-that will be deployed to Azure in V4.
+runs in Docker alongside a separate metadata database.
 
 **V3: dbt transformations** ✅  
 A transformation layer on top of the orchestrated ingestion: clean, 
@@ -203,9 +238,20 @@ tested, documented analytical models with full lineage. Five models
 across three layers (staging, intermediate, marts), 28 passing tests, 
 and a formally documented data quality finding in `mart_skills_demand`.
 
+**V3.5: Docker architecture refactor** ✅  
+Separated the monolithic Docker image into three isolated images — one per 
+service (Airflow, FastAPI, dbt). Resolved a fundamental Python version 
+conflict between Airflow 2.8.1 (Python 3.8) and dbt-postgres 1.11.0 
+(Python 3.10+) that made co-installation impossible. Integrated dbt into 
+the Airflow DAG via `DockerOperator`, completing the end-to-end automated 
+pipeline: ingestion and transformation now run as a single observable DAG 
+without any manual steps. A `docker-socket-proxy` service handles Docker 
+daemon access securely over TCP.
+
 **V4: Azure cloud deployment** ⏳  
-Deploy the full pipeline to Azure. The custom Docker image built in V2 
-is the artifact that goes to Azure Container Registry.
+Deploy the full pipeline to Azure. Each Docker image maps directly to an 
+independently deployable container — the architecture is already structured 
+for this transition.
 
 **V5: Enhanced skill signal** ⏳  
 Integrate a second structured data source to improve skill demand 
