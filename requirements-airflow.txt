@@ -1,0 +1,5 @@
+requests==2.32.2
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+apache-airflow-providers-docker==3.8.0
+docker==6.1.3

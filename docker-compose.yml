@@ -1,6 +1,8 @@
 x-airflow-common:
   &airflow-common
-  build: .
+  build:
+    context: .
+    dockerfile: ./docker/airflow/Dockerfile
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -8,6 +10,10 @@ x-airflow-common:
     DATABASE_URL: ${DATABASE_URL}
     ADZUNA_APP_ID: ${ADZUNA_APP_ID}
     ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    POSTGRES_DB: ${POSTGRES_DB}
+    POSTGRES_HOST: db
     AIRFLOW__CORE__FERNET__KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD__EXAMPLES: 'false'
@@ -77,6 +83,41 @@ services:
     <<: *airflow-common
     command: scheduler
     restart: always
+
+  app:
+    build:
+      context: .
+      dockerfile: ./docker/app/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - db
+
+  dbt:
+    build:
+      context: .
+      dockerfile: ./docker/dbt/Dockerfile
+    image: marketpulse-dbt:latest
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: db
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      AUTH: 1
+      POST: 1
+    ports:
+      - "2375:2375"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    privileged: true
 
 
 volumes:

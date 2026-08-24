@@ -24,7 +24,7 @@ def get_jobs(keyword: str, country: str = "fr", db: Session = Depends(get_db)):
     for raw in raw_jobs:
         normalized = normalize_job(raw, country)
 
-        # Deduplication : on verifie si l'offre existe deja
+        # Deduplication : check if the offer already exists
         existing = db.query(Job).filter(
             Job.external_id == normalized["external_id"]
         ).first()

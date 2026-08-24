@@ -29,7 +29,7 @@ def run():
             db.commit()
 
     db.close()
-    print(f"Ingestion terminée. {total_inserted} nouvelles offres insérées.")
+    print(f"Ingestion finished. {total_inserted} new offers inserted.")
 
 if __name__ == "__main__":
     run()
