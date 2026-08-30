@@ -1,5 +1,6 @@
 x-airflow-common:
   &airflow-common
+  image: marketpulse-airflow:latest
   build:
     context: .
     dockerfile: ./docker/airflow/Dockerfile
