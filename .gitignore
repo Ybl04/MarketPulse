@@ -8,3 +8,4 @@ logs/
 dbt-job.yaml
 airflow-webserver.yaml
 init_airflow.sh
+ENGINEERING_LOG.md
