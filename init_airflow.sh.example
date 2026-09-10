@@ -1,0 +1,9 @@
+#!/bin/bash
+airflow db migrate
+airflow users create \
+  --username YOUR_USERNAME \
+  --password YOUR_PASSWORD \
+  --firstname Admin \
+  --lastname User \
+  --role Admin \
+  --email YOUR_EMAIL

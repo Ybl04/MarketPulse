@@ -8,9 +8,22 @@ load_dotenv()
 Base = declarative_base()
 
 def get_engine():
-    DATABASE_URL = os.getenv("DATABASE_URL")
-    if not DATABASE_URL:
-        raise ValueError("DATABASE_URL is not set")
+    user = os.getenv("POSTGRES_USER")
+    password = os.getenv("POSTGRES_PASSWORD")
+    host = os.getenv("POSTGRES_HOST")
+    db = os.getenv("POSTGRES_DB")
+
+    missing = [name for name, val in {
+        "POSTGRES_USER": user,
+        "POSTGRES_PASSWORD": password,
+        "POSTGRES_HOST": host,
+        "POSTGRES_DB": db
+    }.items() if not val]
+
+    if missing:
+        raise ValueError(f"Missing required env vars: {', '.join(missing)}")
+
+    DATABASE_URL = f"postgresql+psycopg2://{user}:{password}@{host}:5432/{db}"
     return create_engine(DATABASE_URL)
 
 def get_session():

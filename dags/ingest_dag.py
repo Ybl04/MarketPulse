@@ -1,10 +1,8 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.docker.operators.docker import DockerOperator
+from airflow.operators.bash import BashOperator
 from app.scripts.ingest import run
 import datetime
-import os
-
 
 default_args = {
     'owner': 'data_team',
@@ -15,35 +13,41 @@ default_args = {
     'email': ['ybelfalah14@gmail.com'],
 }
 
+DBT_JOB_COMMAND = """
+az login --identity && \
+EXECUTION=$(az containerapp job start \
+  --name marketpulse-dbt-job \
+  --resource-group marketpulse-rg \
+  --query "name" -o tsv) && \
+echo "Job execution started: $EXECUTION" && \
+while true; do
+  STATUS=$(az containerapp job execution show \
+    --name marketpulse-dbt-job \
+    --resource-group marketpulse-rg \
+    --job-execution-name $EXECUTION \
+    --query "properties.status" -o tsv)
+  echo "Current status: $STATUS"
+  if [ "$STATUS" = "Succeeded" ]; then exit 0; fi
+  if [ "$STATUS" = "Failed" ]; then exit 1; fi
+  sleep 15
+done
+"""
+
 with DAG(
-    dag_id = "marketpulse_ingest",
-    default_args = default_args,
-    schedule = "0 7 * * *",
-    catchup = False,
+    dag_id="marketpulse_ingest",
+    default_args=default_args,
+    schedule="0 7 * * *",
+    catchup=False,
 ) as dag:
+
     trigger_ingestion_task = PythonOperator(
         task_id="run_ingestion",
         python_callable=run
-    ) 
-
-    run_dbt_task = DockerOperator(
-        task_id="run_dbt_build",
-        image="marketpulse-dbt",
-        command="dbt build --profiles-dir /opt/dbt/marketpulse_dbt --project-dir /opt/dbt/marketpulse_dbt",
-        network_mode="marketpulse_default",
-        auto_remove=True,
-        docker_url="tcp://docker-proxy:2375",
-        force_pull=False,
-        mount_tmp_dir=False,
-        environment={
-        "POSTGRES_USER": os.environ.get("POSTGRES_USER"),
-        "POSTGRES_PASSWORD": os.environ.get("POSTGRES_PASSWORD"),
-        "POSTGRES_DB": os.environ.get("POSTGRES_DB"),
-        "POSTGRES_HOST": "db",
-        },
     )
 
+    run_dbt_task = BashOperator(
+        task_id="run_dbt_build",
+        bash_command=DBT_JOB_COMMAND,
+    )
 
     trigger_ingestion_task >> run_dbt_task
-
-    

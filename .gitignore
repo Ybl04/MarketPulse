@@ -5,3 +5,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 logs/
+dbt-job.yaml
+airflow-webserver.yaml
+init_airflow.sh
